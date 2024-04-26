@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use clap::Parser;
 use heed::types::{Bytes, DecodeIgnore};
 use heed::{Database, EnvOpenOptions};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 /// A program that displays the size of the documents in a Meilisearch database.
 #[derive(Parser, Debug)]
@@ -21,51 +23,91 @@ struct Args {
 fn main() -> anyhow::Result<()> {
     let Args { path, sum_only } = Args::parse();
 
-    let mut total_number_of_entries = 0;
-    let mut total_documents_size = 0;
+    let m = MultiProgress::new();
+    let style = ProgressStyle::with_template("{msg} {wide_bar} {pos}/{len} {eta}").unwrap();
 
-    for (i, result) in fs::read_dir(path.join("indexes"))?.enumerate() {
-        let entry = result?;
-        let env = EnvOpenOptions::new().max_dbs(1).open(entry.path())?;
+    let indexes: anyhow::Result<Vec<_>> = fs::read_dir(path.join("indexes"))?
+        .enumerate()
+        .map(|(i, result)| {
+            result
+                .map(|entry| {
+                    let pb = m.add(ProgressBar::new(0).with_style(style.clone()));
+                    (i, entry, pb)
+                })
+                .map_err(Into::into)
+        })
+        .collect();
 
-        let rtxn = env.read_txn()?;
-        if let Some(db) = env.open_database(&rtxn, Some("documents"))? {
-            let db: Database<DecodeIgnore, Bytes> = db;
-            let mut number_of_entries = 0;
-            let mut documents_size = 0;
+    let stats: Stats = indexes?
+        .into_par_iter()
+        .map(|(i, entry, pb)| {
+            let env = EnvOpenOptions::new().max_dbs(1).open(entry.path())?;
 
-            for result in db.iter(&rtxn)? {
-                let ((), value) = result?;
-                number_of_entries += 1;
-                documents_size += value.len() as u64;
-            }
+            pb.set_message("Opening read transaction...");
+            let rtxn = env.read_txn()?;
+            pb.set_message("");
 
-            if !sum_only {
-                let prefix = if i == 0 { "   " } else { " + " };
-                println!(
-                    "{prefix} number of documents: {number_of_entries}, \
+            let stats = if let Some(db) = env.open_database(&rtxn, Some("documents"))? {
+                let db: Database<DecodeIgnore, Bytes> = db;
+                let mut stats = Stats::default();
+
+                let len = db.len(&rtxn)?;
+                pb.set_length(len);
+
+                for result in db.iter(&rtxn)? {
+                    let ((), value) = result?;
+                    stats.number_of_entries += 1;
+                    stats.documents_size += value.len() as u64;
+                    pb.inc(1);
+                }
+
+                if !sum_only {
+                    let Stats { number_of_entries, documents_size } = stats;
+                    let prefix = if i == 0 { "   " } else { " + " };
+                    pb.println(format!(
+                        "{prefix} number of documents: {number_of_entries}, \
                               documents size: {documents_size}B"
-                );
-            }
+                    ));
+                }
 
-            total_number_of_entries += number_of_entries;
-            total_documents_size += documents_size;
-        }
+                stats
+            } else {
+                Stats::default()
+            };
 
-        drop(rtxn);
+            drop(rtxn);
 
-        // We close the envs because it can take a lot of memory at some point.
-        env.prepare_for_closing().wait();
-    }
+            // We close the envs because it can take a lot of memory at some point.
+            env.prepare_for_closing().wait();
 
+            Ok(stats) as anyhow::Result<_>
+        })
+        .reduce(
+            || Ok(Stats::default()),
+            |a, b| match (a, b) {
+                (Ok(a), Ok(b)) => Ok(Stats {
+                    number_of_entries: a.number_of_entries + b.number_of_entries,
+                    documents_size: a.documents_size + b.documents_size,
+                }),
+                (Ok(_), Err(e)) | (Err(e), Ok(_)) | (Err(e), Err(_)) => Err(e),
+            },
+        )?;
+
+    let Stats { number_of_entries, documents_size } = stats;
     if sum_only {
-        println!("{total_documents_size}");
+        println!("{documents_size}");
     } else {
         println!(
-            "total number of documents: {total_number_of_entries}, \
-             total documents size: {total_documents_size}B"
+            "total number of documents: {number_of_entries}, \
+             total documents size: {documents_size}B"
         );
     }
 
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct Stats {
+    number_of_entries: u64,
+    documents_size: u64,
 }

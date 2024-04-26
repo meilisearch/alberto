@@ -1,6 +1,6 @@
 [package]
 name = "alberto"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 repository = "https://github.com/meilisearch/alberto"
 
@@ -8,6 +8,8 @@ repository = "https://github.com/meilisearch/alberto"
 anyhow = "1.0.81"
 clap = { version = "4.5.4", features = ["derive"] }
 heed = "0.20.0-alpha.9"
+indicatif = "0.17.8"
+rayon = "1.10.0"
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
