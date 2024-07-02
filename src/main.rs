@@ -63,10 +63,11 @@ fn main() -> anyhow::Result<()> {
 
                 if !sum_only {
                     let Stats { number_of_entries, documents_size } = stats;
+                    let avg = documents_size as f32 / number_of_entries as f32;
                     let prefix = if i == 0 { "   " } else { " + " };
                     pb.println(format!(
                         "{prefix} number of documents: {number_of_entries}, \
-                              documents size: {documents_size}B"
+                              documents size: {documents_size}B (average {avg:.02}B by document)"
                     ));
                 }
 
@@ -97,9 +98,11 @@ fn main() -> anyhow::Result<()> {
     if sum_only {
         println!("{documents_size}");
     } else {
+        let avg = documents_size as f32 / number_of_entries as f32;
         println!(
             "total number of documents: {number_of_entries}, \
-             total documents size: {documents_size}B"
+             total documents size: {documents_size}B, \
+             average document size: {avg:.02}B"
         );
     }
 
