@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
     let stats: Stats = indexes?
         .into_par_iter()
         .map(|(i, entry, pb)| {
-            let env = EnvOpenOptions::new().max_dbs(1).open(entry.path())?;
+            let env = unsafe { EnvOpenOptions::new().max_dbs(1).open(entry.path())? };
 
             pb.set_message("Opening read transaction...");
             let rtxn = env.read_txn()?;
